@@ -734,6 +734,23 @@ body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI
     tooltipEl.style.display = 'none';\n
   }\n
 \n
+  function killNativeTooltip(containerEl) {\n
+    if (!containerEl || !containerEl.querySelectorAll) return;\n
+    try {\n
+      var nodes = containerEl.querySelectorAll('canvas,svg title,[title]');\n
+      for (var i = 0; i < nodes.length; i++) {\n
+        var n = nodes[i];\n
+        if (!n) continue;\n
+        if (n.tagName && String(n.tagName).toLowerCase() === 'title') {\n
+          if (n.parentNode) n.parentNode.removeChild(n);\n
+          continue;\n
+        }\n
+        if (n.removeAttribute) n.removeAttribute('title');\n
+        try { n.title = ''; } catch (e) {}\n
+      }\n
+    } catch (e) {}\n
+  }\n
+\n
   var views = [];\n
   function finalizeViews() {\n
     for (var i = 0; i < views.length; i++) {\n
@@ -756,15 +773,19 @@ body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI
 \n
   var lastFocusEl = null;\n
 \n
-  function attachTooltip(view, chartTitle) {\n
+  function attachTooltip(view, chartTitle, containerEl) {\n
+    view.addEventListener('mouseover', function () { killNativeTooltip(containerEl); });\n
     view.addEventListener('mousemove', function (event, item) {\n
+      // Vega may set canvas.title / <title> nodes for its own tooltip.\n
+      // Clear them so we only show the custom dark tooltip.\n
+      killNativeTooltip(containerEl);\n
       if (!item || !item.datum) { hideTooltip(); return; }\n
       // Ignore axis/legend/etc. Only show tooltips for actual marks.\n
       var role = item && item.mark && item.mark.role ? String(item.mark.role) : '';\n
       if (role && role !== 'mark') { hideTooltip(); return; }\n
       showTooltipAt(event.clientX, event.clientY, chartTitle, item.datum);\n
     });\n
-    view.addEventListener('mouseout', function () { hideTooltip(); });\n
+    view.addEventListener('mouseout', function () { hideTooltip(); killNativeTooltip(containerEl); });\n
   }\n
 \n
   function updateSignalAll(name, value) {\n
@@ -796,7 +817,7 @@ body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI
       s.datasets[key] = datasets[key] || [];\n
     }\n
     var mv = compileView(s, modalBodyEl);\n
-    attachTooltip(mv, title);\n
+    attachTooltip(mv, title, modalBodyEl);\n
     // Close will finalize.\n
     modalEl._xrayView = mv;\n
     if (modalCloseEl) {\n
@@ -1013,9 +1034,9 @@ body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI
 	        s0.datasets.staleness = stalenessStatic;\n
 	        s0.datasets.knowledge_loss = knowledgeLossStatic;\n
 \n
-	        var v0 = compileView(s0, bd0);\n
-	        attachTooltip(v0, ch0.title || ch0.id || 'Chart');\n
-	        views.push({id: ch0.id, title: ch0.title, view: v0});\n
+        var v0 = compileView(s0, bd0);\n
+        attachTooltip(v0, ch0.title || ch0.id || 'Chart', bd0);\n
+        views.push({id: ch0.id, title: ch0.title, view: v0});\n
 	        (function (title, spec) {\n
 	          fsBtn0.addEventListener('click', function (e) {\n
 	            e.preventDefault();\n
@@ -1316,7 +1337,7 @@ body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI
 	        var spec = buildSpecFromTemplate(ch, datasets);\n
 \n
 	        var v = compileView(spec, bd);\n
-	        attachTooltip(v, titleTxt);\n
+        attachTooltip(v, titleTxt, bd);\n
 	        views.push({id: ch.id, title: titleTxt, view: v, spec: spec, chart: ch, container: bd});\n
 	        var viewIdx = views.length - 1;\n
 \n
@@ -1330,7 +1351,7 @@ body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI
 	              try { bdCopy.innerHTML = ''; } catch (e3) {}\n
 	              var spec2 = buildSpecFromTemplate(chCopy, datasetsCopy);\n
 	              var v2 = compileView(spec2, bdCopy);\n
-	              attachTooltip(v2, titleCopy);\n
+	              attachTooltip(v2, titleCopy, bdCopy);\n
 	              views[idx].view = v2;\n
 	              views[idx].spec = spec2;\n
 	            });\n
@@ -1526,11 +1547,12 @@ body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI
        :title (t :staleness)
        :spec (-> (merge base
                         {:data {:name "staleness"}
+                         ;; First filter to hotspot TopN (by change/churn), then show staleness within that set.
                          :transform [{:filter "datum.age_days != null"}
-                                     {:window [{:op "rank" :as "r"}]
-                                      :sort [{:field "age_days" :order "descending"}
-                                             {:field "change_count" :order "descending"}]}
-                                     {:filter "datum.r <= topN"}]
+                                     {:window [{:op "rank" :as "hr"}]
+                                      :sort [{:field "change_count" :order "descending"}
+                                             {:field "churn_lines" :order "descending"}]}
+                                     {:filter "datum.hr <= topN"}]
                          :width 520
                          :height {:step 14}
                          :mark {:type "bar"}
